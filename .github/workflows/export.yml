@@ -1,0 +1,54 @@
+name: Export GitHub Release Asset URLs
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag name (e.g. v1.0.0). Leave empty to use the latest release.'
+        required: false
+        default: ''
+
+jobs:
+  export-asset-urls:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y jq curl
+
+      - name: Determine which release to fetch
+        run: |
+          if [ -z "${{ github.event.inputs.release_tag }}" ]; then
+            echo "Fetching latest release for ${{ github.repository }}…"
+            curl -s \
+              -H "Accept: application/vnd.github.v3+json" \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/${{ github.repository }}/releases/latest \
+              > release.json
+            echo "latest" > selected_tag.txt
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+            echo "Fetching all releases for ${{ github.repository }}…"
+            curl -s \
+              -H "Accept: application/vnd.github.v3+json" \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/${{ github.repository }}/releases \
+              > all_releases.json
+            echo "Selecting release with tag $TAG…"
+            jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag)' all_releases.json > release.json
+            echo "$TAG" > selected_tag.txt
+          fi
+
+      - name: Extract asset download URLs
+        run: |
+          TAG=$(cat selected_tag.txt)
+          jq -r '.assets[].browser_download_url' release.json > release_asset_urls.txt
+          echo "Found $(wc -l < release_asset_urls.txt) assets in release $TAG"
+
+      - name: Upload download‐links artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-urls-${{ github.event.inputs.release_tag || 'latest' }}
+          path: release_asset_urls.txt

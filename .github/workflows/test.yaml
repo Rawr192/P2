@@ -1,0 +1,30 @@
+name: Run mega-nz.yaml per link without matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      mega_urls:
+        description: 'MEGA.nz URLs (comma or space separated)'
+        required: true
+
+jobs:
+  dispatch-per-link:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Split links and trigger mega-nz.yaml for each
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          URLS=$(echo "${{ github.event.inputs.mega_urls }}" | tr ',' ' ')
+          for url in $URLS; do
+            echo "Dispatching mega-nz.yaml workflow for URL: $url"
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              https://api.github.com/repos/$REPO/actions/workflows/mega-nz.yaml/dispatches \
+              -d "{\"ref\":\"$REF\",\"inputs\":{\"mega_urls\":\"$url\"}}"
+            sleep 3  # avoid API rate limiting
+          done

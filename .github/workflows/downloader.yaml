@@ -1,0 +1,142 @@
+name: Download Videos from URLs
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_urls:
+        description: 'URLs of pages containing videos (separated by commas)'
+        required: true
+      maximize_disk_space:
+        description: Maximize disk space. Check if getting out of disk space error
+        type: boolean
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Maximize disk space
+      if: inputs.maximize_disk_space
+      uses: easimon/maximize-build-space@v10
+      with:
+        remove-dotnet: true
+        remove-android: true
+        remove-haskell: true
+        remove-codeql: true
+        remove-docker-images: true
+        
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install necessary tools
+      run: |
+        sudo apt-get update 
+        sudo apt-get install -y aria2 lsb-release curl python3-pip
+        pip3 install requests beautifulsoup4
+
+    - name: Extract video URLs and download
+      run: |
+        python3 - << EOF
+        import requests
+        from bs4 import BeautifulSoup
+        import subprocess
+        import sys
+
+        def extract_video_url(url):
+            try:
+                response = requests.get(url)
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                for meta in soup.find_all('meta', property=['og:video', 'og:video:url', 'og:video:secure_url']):
+                    video_url = meta.get('content')
+                    if video_url:
+                        return video_url
+                
+                print(f"No video URL found for {url}")
+                return None
+            except Exception as e:
+                print(f"Error processing {url}: {str(e)}")
+                return None
+
+        urls = "${{ inputs.video_urls }}".split(',')
+        video_urls = []
+        for url in urls:
+            url = url.strip()
+            if url:
+                print(f"Processing: {url}")
+                video_url = extract_video_url(url)
+                if video_url:
+                    video_urls.append(video_url)
+
+        if video_urls:
+            with open('video_urls.txt', 'w') as f:
+                for url in video_urls:
+                    f.write(f"{url}\n")
+            
+            print("Downloading videos...")
+            subprocess.run(['aria2c', '--file-allocation=none', '--force-sequential=true', '-i', 'video_urls.txt', '-x', '16', '-s', '16'], check=True)
+        else:
+            print("No video URLs found to download")
+            sys.exit(1)
+        EOF
+    
+    - name: List downloaded files
+      run: ls -la
+
+    - name: Delete specified files 
+      run: | 
+        rm -f LICENSE 
+        rm -f "Piece Size Table.csv" 
+        rm -f README.md 
+        rm -f index.html 
+        rm -f link.url 
+        rm -f p.py 
+        rm -f test.py 
+        rm -f test2.py 
+
+    - name: Sanitize, split, and upload files
+      run: |
+        shopt -s nullglob
+        gh release create mega-downloads --title "mega-downloads" --notes "mega-downloads" || true
+        for file in *; do
+          if [[ -f "$file" && "$file" != "README.md" && "$file" != ".github" && "$file" != ".gitignore" ]]; then
+            extension="${file##*.}"
+            random_name=$(uuidgen)
+            new_name="${random_name}.${extension}"
+
+            while gh release view mega-downloads --json assets --jq ".assets[].name" | grep -q "$new_name"; do
+              random_name=$(uuidgen)
+              new_name="${random_name}.${extension}"
+            done
+
+            filesize=$(stat -c%s "$file")
+            if [ "$filesize" -gt 2000000000 ]; then
+              split -b 2000m "$file" "${new_name}.part_"
+              for part in "${new_name}.part_"*; do
+                part_size=$(stat -c%s "$part")
+                part_new_name="${new_name}.${part##*.}"
+
+                while gh release view mega-downloads --json assets --jq ".assets[].name" | grep -q "$part_new_name"; do
+                  random_name=$(uuidgen)
+                  new_name="${random_name}.${extension}"
+                  part_new_name="${new_name}.${part##*.}"
+                done
+
+                echo "Uploading $part ($part_size bytes) as $part_new_name"
+                gh release upload "mega-downloads" "./$part" --clobber
+              done
+            else
+              mv "$file" "$new_name"
+              file_size=$(stat -c%s "$new_name")
+              echo "Uploading $new_name ($file_size bytes)"
+              gh release upload "mega-downloads" "./$new_name" --clobber
+            fi
+          fi
+        done
+      env:
+        GITHUB_TOKEN: ${{ secrets.PAT }}
+
+    - name: List files after processing
+      run: ls -la
