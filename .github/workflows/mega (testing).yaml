@@ -39,7 +39,6 @@ jobs:
 
     - name: Download from MEGA.nz
       run: |
-        # Replace commas with spaces, then split on spaces
         URLS=$(echo "${{ inputs.mega_urls }}" | tr ',' ' ')
         for url in $URLS; do
           mega-get "$url"
@@ -50,110 +49,65 @@ jobs:
 
     - name: Delete specified files
       run: |
-        rm -f LICENSE
-        rm -f "Piece Size Table.csv"
-        rm -f README.md
-        rm -f index.html
-        rm -f link.url
-        rm -f p.py
-        rm -f test.py
-        rm -f test2.py
+        rm -f LICENSE "Piece Size Table.csv" README.md index.html link.url p.py test.py test2.py
         UBUNTU_VERSION=$(lsb_release -rs)
-        MEGACMD_DEB="megacmd-xUbuntu_${UBUNTU_VERSION}_amd64.deb"
-        rm -f "$MEGACMD_DEB"
+        rm -f "megacmd-xUbuntu_${UBUNTU_VERSION}_amd64.deb"
 
-    - name: Sanitize, split, and upload files
+    - name: Sanitize and split files (artifact mode)
       run: |
         set -euo pipefail
         shopt -s nullglob
 
-        gh release create mega-downloads4 --title "mega-downloads4" --notes "mega-downloads4" || true
-
-        # Get existing asset names once
-        existing_assets="$(gh release view mega-downloads4 --json assets --jq '.assets[].name' || true)"
+        mkdir -p processed_files
 
         gen_unique_name() {
           local ext="$1"
           local candidate
           while :; do
             candidate="$(uuidgen)"
-            if [ -n "$ext" ]; then
-              candidate="${candidate}.${ext}"
-            fi
-            if ! printf '%s\n' "$existing_assets" | grep -Fxq "$candidate"; then
+            [ -n "$ext" ] && candidate="${candidate}.${ext}"
+            if [ ! -e "processed_files/$candidate" ]; then
               echo "$candidate"
-              existing_assets="${existing_assets}"$'\n'"$candidate"
               return
             fi
           done
         }
 
         for file in *; do
-          # Skip non-regular files
-          if [ ! -f "$file" ]; then
-            continue
-          fi
-
-          # Skip known housekeeping files
+          [ -f "$file" ] || continue
           case "$file" in
             README.md|.gitignore|LICENSE|index.html|link.url|p.py|test.py|test2.py)
               continue
               ;;
           esac
 
-          # Handle extension safely; if no dot, extension is empty
-          basename="${file##*/}"
-          if [[ "$basename" == *.* ]]; then
-            extension="${basename##*.}"
+          if [[ "$file" == *.* ]]; then
+            extension="${file##*.}"
           else
             extension=""
           fi
 
           new_name="$(gen_unique_name "$extension")"
-
           filesize=$(stat -c%s -- "$file")
+
           if [ "$filesize" -gt 2000000000 ]; then
-            # Split large file; parts inherit random base name plus a numeric suffix
-            base_without_ext="$new_name"
-            if [ -n "$extension" ]; then
-              base_without_ext="${new_name%.*}"
-            fi
-
-            split -b 2000m --numeric-suffixes=0 --suffix-length=3 -- "$file" "${base_without_ext}.part_"
-
-            for part in "${base_without_ext}.part_"*; do
-              part_suffix="${part##*.part_}"
+            base_without_ext="${new_name%.*}"
+            split -b 2000m --numeric-suffixes=0 --suffix-length=3 -- "$file" "processed_files/${base_without_ext}.part_"
+            for part in processed_files/${base_without_ext}.part_*; do
               if [ -n "$extension" ]; then
-                part_new_name="${base_without_ext}.part_${part_suffix}.${extension}"
-              else
-                part_new_name="${base_without_ext}.part_${part_suffix}"
+                mv "$part" "${part}.${extension}"
               fi
-
-              # Ensure uniqueness for part name as well
-              while printf '%s\n' "$existing_assets" | grep -Fxq "$part_new_name"; do
-                base_without_ext="$(uuidgen)"
-                if [ -n "$extension" ]; then
-                  part_new_name="${base_without_ext}.part_${part_suffix}.${extension}"
-                else
-                  part_new_name="${base_without_ext}.part_${part_suffix}"
-                fi
-              done
-              existing_assets="${existing_assets}"$'\n'"$part_new_name"
-
-              mv -- "$part" "$part_new_name"
-              part_size=$(stat -c%s -- "$part_new_name")
-              echo "Uploading $part_new_name ($part_size bytes)"
-              gh release upload "mega-downloads4" "./$part_new_name" --clobber
             done
           else
-            mv -- "$file" "$new_name"
-            file_size=$(stat -c%s -- "$new_name")
-            echo "Uploading $new_name ($file_size bytes)"
-            gh release upload "mega-downloads4" "./$new_name" --clobber
+            mv "$file" "processed_files/$new_name"
           fi
         done
-      env:
-        GITHUB_TOKEN: ${{ secrets.PAT }}
 
-    - name: List files after processing
-      run: ls -la
+    - name: List processed files
+      run: ls -la processed_files
+
+    - name: Upload as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: mega-downloaded-files
+        path: processed_files/
