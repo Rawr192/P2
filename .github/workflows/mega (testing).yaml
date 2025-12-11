@@ -47,19 +47,18 @@ jobs:
     - name: List downloaded files
       run: ls -la
 
-    - name: Delete specified files
+    - name: Delete unnecessary files
       run: |
         rm -f LICENSE "Piece Size Table.csv" README.md index.html link.url p.py test.py test2.py
         UBUNTU_VERSION=$(lsb_release -rs)
         rm -f "megacmd-xUbuntu_${UBUNTU_VERSION}_amd64.deb"
 
-    - name: Sanitize, split, and upload files
+    - name: Sanitize, split, and upload to release
       run: |
         set -euo pipefail
         shopt -s nullglob
 
         gh release create mega-downloads4 --title "mega-downloads4" --notes "mega-downloads4" || true
-
         existing_assets="$(gh release view mega-downloads4 --json assets --jq '.assets[].name' || true)"
 
         gen_unique_name() {
@@ -67,9 +66,7 @@ jobs:
           local candidate
           while :; do
             candidate="$(uuidgen)"
-            if [ -n "$ext" ]; then
-              candidate="${candidate}.${ext}"
-            fi
+            [ -n "$ext" ] && candidate="${candidate}.${ext}"
             if ! printf '%s\n' "$existing_assets" | grep -Fxq "$candidate"; then
               echo "$candidate"
               existing_assets="${existing_assets}"$'\n'"$candidate"
@@ -80,6 +77,7 @@ jobs:
 
         for file in *; do
           [ -f "$file" ] || continue
+
           case "$file" in
             README.md|.gitignore|LICENSE|index.html|link.url|p.py|test.py|test2.py)
               continue
@@ -97,23 +95,23 @@ jobs:
 
           if [ "$filesize" -gt 2000000000 ]; then
             base_without_ext="${new_name%.*}"
-            ext_suffix=""
-            [ -n "$extension" ] && ext_suffix=".${extension}"
 
-            # Split into alphabetic suffixes: .part_aa, .part_ab, etc.
-            split -b 2000m -d --additional-suffix="$ext_suffix" --suffix-length=2 -- "$file" "${base_without_ext}.part_"
+            # Split file into 2GB chunks with alphabetic suffixes: .part_aa, .part_ab, etc.
+            split -b 2000m --suffix-length=2 --additional-suffix="" -- "$file" "${base_without_ext}.part_"
 
-            # Rename from numeric (.part_00) to alphabetic (.part_aa, .part_ab, etc.)
-            counter=0
-            for part in "${base_without_ext}.part_"*"$ext_suffix"; do
-              suffix=$(printf "%02d" $counter)
-              # Convert numeric to alphabetic (aa, ab, ac, etc.)
-              alpha_suffix=$(echo "$suffix" | awk '{for(i=1;i<=NF;i++){s="";for(j=1;j<=length($0);j++){c=substr($0,j,1);if(c~/[0-9]/){n=int(c);s=sprintf("%s%s",s,substr("abcdefghijklmnopqrstuvwxyz",n+1,1))}};print s}}')
-              new_part_name="${base_without_ext}.part_${alpha_suffix}${ext_suffix}"
+            # Rename .part_aa, .part_ab properly using base name
+            count=0
+            for part in "${base_without_ext}.part_"*; do
+              suffix=$(printf "%02d" $count)
+              # Compute alphabetic suffix (aa, ab, ac...)
+              first=$((count / 26))
+              second=$((count % 26))
+              alpha=$(printf "%s%s" "$(echo {a..z} | cut -d' ' -f $((first+1)))" "$(echo {a..z} | cut -d' ' -f $((second+1)))")
+              new_part_name="${base_without_ext}.part_${alpha}"
               mv "$part" "$new_part_name"
               echo "Uploading $new_part_name"
               gh release upload "mega-downloads4" "./$new_part_name" --clobber
-              counter=$((counter+1))
+              count=$((count+1))
             done
           else
             mv "$file" "$new_name"
@@ -124,5 +122,5 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.PAT }}
 
-    - name: List files after processing
+    - name: List final files
       run: ls -la
