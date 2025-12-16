@@ -63,7 +63,7 @@ jobs:
     - name: Sanitize, split, and upload files
       run: |
         shopt -s nullglob
-        gh release create mega-downloads7 --title "mega-downloads7" --notes "mega-downloads7" || true
+        gh release create mega-downloads8 --title "mega-downloads8" --notes "mega-downloads8" || true
         for file in *; do
           if [[ -f "$file" && "$file" != "README.md" && "$file" != ".github" && "$file" != ".gitignore" ]]; then
             # Extract file extension
@@ -73,7 +73,7 @@ jobs:
             # Combine the random name with the original file extension
             new_name="${random_name}.${extension}"
             # Check if the new name already exists in the GitHub release
-            while gh release view mega-downloads7 --json assets --jq ".assets[].name" | grep -q "$new_name"; do
+            while gh release view mega-downloads8 --json assets --jq ".assets[].name" | grep -q "$new_name"; do
               random_name=$(uuidgen)
               new_name="${random_name}.${extension}"
             done
@@ -86,13 +86,13 @@ jobs:
                 part_size=$(stat -c%s "$part")
                 part_new_name="${new_name}.${part##*.}"
                 # Check if the part name already exists in the GitHub release
-                while gh release view mega-downloads7 --json assets --jq ".assets[].name" | grep -q "$part_new_name"; do
+                while gh release view mega-downloads8 --json assets --jq ".assets[].name" | grep -q "$part_new_name"; do
                   random_name=$(uuidgen)
                   new_name="${random_name}.${extension}"
                   part_new_name="${new_name}.${part##*.}"
                 done
                 echo "Uploading $part ($part_size bytes) as $part_new_name"
-                gh release upload "mega-downloads7" "./$part" --clobber
+                gh release upload "mega-downloads8" "./$part" --clobber
               done
             else
               # Rename the file
@@ -100,7 +100,7 @@ jobs:
               # Upload the file
               file_size=$(stat -c%s "$new_name")
               echo "Uploading $new_name ($file_size bytes)"
-              gh release upload "mega-downloads7" "./$new_name" --clobber
+              gh release upload "mega-downloads8" "./$new_name" --clobber
             fi
           fi
         done
