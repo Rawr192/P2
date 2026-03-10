@@ -19,12 +19,36 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           URLS=$(echo "${{ github.event.inputs.mega_urls }}" | tr ',' ' ')
+          MAX_CONCURRENT=5
+          
           for url in $URLS; do
+            echo "Processing URL: $url"
+            
+            # Wait until we have space (less than 5 concurrent mega-nz workflows)
+            while true; do
+              CURRENT_COUNT=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                https://api.github.com/repos/$REPO/actions/workflows/mega-nz.yaml/runs?status=queued,in_progress \
+                | jq '[.workflow_runs[] | select(.name == "mega-nz")] | length')
+              
+              if [ "$CURRENT_COUNT" -lt "$MAX_CONCURRENT" ]; then
+                echo "Space available: $CURRENT_COUNT/$MAX_CONCURRENT workflows running/queued"
+                break
+              fi
+              
+              echo "Waiting... $CURRENT_COUNT/$MAX_CONCURRENT mega-nz workflows currently running/queued"
+              sleep 30
+            done
+            
+            # Dispatch the workflow
             echo "Dispatching mega-nz.yaml workflow for URL: $url"
             curl -X POST \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer $GITHUB_TOKEN" \
               https://api.github.com/repos/$REPO/actions/workflows/mega-nz.yaml/dispatches \
               -d "{\"ref\":\"$REF\",\"inputs\":{\"mega_urls\":\"$url\"}}"
+            
+            echo "✓ Dispatched successfully"
             sleep 3  # avoid API rate limiting
           done
+          
+          echo "All URLs processed successfully"
