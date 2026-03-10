@@ -1,0 +1,65 @@
+name: Rerun failed "Download from MEGA.nz" workflows for a date
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_date:
+        description: "Date (UTC) in format YYYY-MM-DD"
+        required: true
+        type: string
+
+jobs:
+  rerun-failed-mega-by-date:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Install GitHub CLI
+        run: |
+          type -p gh >/dev/null || {
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+              | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+            && sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) \
+              signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+              https://cli.github.com/packages stable main" \
+              | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt-get update
+            sudo apt-get install -y gh jq
+          }
+
+      - name: Authenticate gh
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          gh auth status || gh auth login --with-token <<< "$GH_TOKEN"
+
+      - name: Find failed runs for given date and rerun failed jobs
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+          REPO: ${{ github.repository }}
+          RUN_DATE: ${{ github.event.inputs.run_date }}
+        run: |
+          set -euo pipefail
+
+          FROM="${RUN_DATE}T00:00:00Z"
+          TO="${RUN_DATE}T23:59:59Z"
+
+          echo "Selecting runs created between $FROM and $TO"
+
+          runs_json=$(gh run list \
+            --repo "$REPO" \
+            --workflow "mega-nz-2.yaml" \
+            --created "${FROM}..${TO}" \
+            --json databaseId,name,status,conclusion,createdAt \
+            --limit 200)
+
+          echo "$runs_json" | jq -c \
+            '.[] | select(.name == "Download from MEGA.nz" and .status == "completed" and .conclusion == "failure")' |
+          while read -r run; do
+            id=$(echo "$run" | jq -r '.databaseId')
+            name=$(echo "$run" | jq -r '.name')
+            created=$(echo "$run" | jq -r '.createdAt')
+            echo "Rerunning failed jobs for run $id ($name) created at $created..."
+            gh run rerun "$id" --failed --repo "$REPO"
+          done
