@@ -49,7 +49,7 @@ jobs:
 
           runs_json=$(gh run list \
             --repo "$REPO" \
-            --workflow "mega-nz-2.yaml" \
+            --workflow "mega-nz.yaml" \
             --created "${FROM}..${TO}" \
             --json databaseId,name,status,conclusion,createdAt \
             --limit 200)
